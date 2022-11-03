@@ -6,6 +6,7 @@ The [Symfony binary][1] is a must-have tool when developing Symfony applications
 on your local machine. It provides:
 
 * The best way to [create new Symfony applications][2];
+* A simple way to use multiple PHP versions
 * A powerful [local web server][3] to develop your projects with support for [TLS certificates][4];
 * A tool to [check for security vulnerabilities][5];
 * Seamless integration with [Platform.sh][6].
