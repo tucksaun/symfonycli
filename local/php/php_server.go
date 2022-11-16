@@ -137,6 +137,11 @@ func (p *Server) Start(ctx context.Context, pidFile *pid.PidFile) (*pid.PidFile,
 			return nil, nil, errors.WithStack(err)
 		}
 		env = append(env, "APP_FRONT_CONTROLLER="+strings.TrimLeft(p.passthru, "/"))
+
+		if _, hasCliServerWorkers := os.LookupEnv("PHP_CLI_SERVER_WORKERS"); !hasCliServerWorkers {
+			env = append(env, "PHP_CLI_SERVER_WORKERS=10")
+		}
+
 		p.proxy = httputil.NewSingleHostReverseProxy(target)
 		p.proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 			w.WriteHeader(http.StatusBadGateway)
