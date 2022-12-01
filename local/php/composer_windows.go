@@ -20,34 +20,22 @@
 package php
 
 import (
-	"github.com/mitchellh/go-homedir"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func findComposerSystemSpecific(extraBin string) string {
 	// Special Support for Scoop
-	scoopPath := os.Getenv("SCOOP")
-	if scoopPath == "" {
-		if homedir, err := homedir.Dir(); err != nil {
-			scoopPath = filepath.Join(homedir, "scoop")
-		}
-	}
-
-	scoopGlobalPath := os.Getenv("SCOOP_GLOBAL")
-	if scoopGlobalPath == "" {
-		if programData := os.Getenv("PROGRAMDATA"); programData != "" {
-			scoopGlobalPath = filepath.Join(programData, "scoop")
-		}
-	}
-
-	for _, path := range []string{scoopPath, scoopGlobalPath} {
-		if path == "" {
+	paths := os.Getenv("Path")
+	for _, path := range filepath.SplitList(paths) {
+		if path == "" || !strings.Contains(path, "scoop\\shims") {
 			continue
 		}
-
-		pharPath := filepath.Join(path, "apps", "composer", "current", "composer.phar")
+		
+		pharPath := filepath.Join(filepath.Dir(path), "apps", "composer", "current", "composer.phar")
 		d, err := os.Stat(pharPath)
+		
 		if err != nil {
 			continue
 		}
