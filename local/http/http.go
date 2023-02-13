@@ -220,6 +220,13 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request) {
 		}
 		path := path.Clean(filepath.Join(s.DocumentRoot, p))
 		if stat, err := os.Stat(path); err == nil && !stat.IsDir() {
+			if origin := r.Header.Get("origin"); origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,If-None-Match")
+				w.Header().Set("Access-Control-Max-Age", "3600")
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
 			http.ServeFile(w, r, path)
 			return
 		}
