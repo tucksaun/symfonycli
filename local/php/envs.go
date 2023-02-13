@@ -29,23 +29,24 @@ import (
 	"github.com/symfony-cli/symfony-cli/envs"
 )
 
-func (p *Server) resolveIndexFile(pathInfo string) (string, string) {
-
+func (p *Server) resolveScriptName(pathInfo string) (string, string) {
 	if pos := strings.Index(strings.ToLower(pathInfo), ".php"); pos != -1 {
 		file := pathInfo[:pos+4]
 		if _, err := os.Stat(filepath.Join(p.documentRoot, file)); err == nil {
 			return file, pathInfo[pos+4:]
 		}
-
 	}
 
 	if len(pathInfo) > 1 {
 		paths := strings.Split(strings.Trim(pathInfo, "/"), "/")
 		for n := len(paths); n > 0; n-- {
-			indexDir := filepath.Join(paths[:n]...)
-			file := filepath.Join(indexDir, p.passthru)
+			if paths[n-1] == "" {
+				continue
+			}
+
+			file := filepath.Join(append(paths[:n], p.passthru)...)
 			if _, err := os.Stat(filepath.Join(p.documentRoot, file)); err == nil {
-				return "/" + file, pathInfo[strings.Index(pathInfo, indexDir)+len(indexDir):]
+				return "/" + file, pathInfo[strings.LastIndex(pathInfo, paths[n-1])+len(paths[n-1]):]
 			}
 		}
 	}
@@ -54,8 +55,7 @@ func (p *Server) resolveIndexFile(pathInfo string) (string, string) {
 }
 
 func (p *Server) generateEnv(req *http.Request) map[string]string {
-
-	scriptName, pathInfo := p.resolveIndexFile(req.URL.Path)
+	scriptName, pathInfo := p.resolveScriptName(req.URL.Path)
 
 	https := ""
 	if req.TLS != nil {
