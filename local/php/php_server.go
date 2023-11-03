@@ -195,7 +195,8 @@ func (p *Server) Serve(w http.ResponseWriter, r *http.Request, env map[string]st
 	if p.passthru == "" {
 		return errors.Errorf(`Unable to guess the web front controller under "%s"`, p.projectDir)
 	}
-	for k, v := range p.generateEnv(r) {
+	_server, _env := p.generateEnv(r)
+	for k, v := range _env {
 		env[k] = v
 	}
 	if p.Version.IsCLIServer() {
@@ -203,7 +204,10 @@ func (p *Server) Serve(w http.ResponseWriter, r *http.Request, env map[string]st
 		r.Header.Add("__SYMFONY_LOCAL_REQUEST_ID__", rid)
 		envPath := p.phpRouterFile() + "-" + rid + "-env"
 		envContent := "<?php "
-		for k, v := range env {
+		for k, v := range _server {
+			envContent += fmt.Sprintf("$_SERVER['%s'] = '%s';\n", addslashes.Replace(k), addslashes.Replace(v))
+		}
+		for k, v := range _env {
 			envContent += fmt.Sprintf("$_ENV['%s'] = '%s';\n", addslashes.Replace(k), addslashes.Replace(v))
 		}
 		err := errors.WithStack(os.WriteFile(envPath, []byte(envContent), 0644))

@@ -30,7 +30,7 @@ import (
 	"github.com/symfony-cli/symfony-cli/envs"
 )
 
-func (p *Server) generateEnv(req *http.Request) map[string]string {
+func (p *Server) generateEnv(req *http.Request) (map[string]string, map[string]string) {
 	scriptName := p.passthru
 	https := ""
 	if req.TLS != nil {
@@ -52,7 +52,7 @@ func (p *Server) generateEnv(req *http.Request) map[string]string {
 		remoteAddr, remotePort, _ = net.SplitHostPort(req.RemoteAddr)
 	}
 
-	env := map[string]string{
+	server := map[string]string{
 		"CONTENT_LENGTH":    req.Header.Get("Content-Length"),
 		"CONTENT_TYPE":      req.Header.Get("Content-Type"),
 		"DOCUMENT_URI":      scriptName,
@@ -72,6 +72,8 @@ func (p *Server) generateEnv(req *http.Request) map[string]string {
 		"SCRIPT_NAME":       scriptName,
 	}
 
+	env := map[string]string{}
+
 	if local, err := envs.NewLocal(p.projectDir, false); err == nil {
 		for k, v := range envs.AsMap(local) {
 			env[k] = v
@@ -87,5 +89,5 @@ func (p *Server) generateEnv(req *http.Request) map[string]string {
 		}
 		env["HTTP_"+key] = strings.Join(v, ";")
 	}
-	return env
+	return server, env
 }
