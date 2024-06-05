@@ -37,34 +37,42 @@ func ReadDBVersionFromPlatformServiceYAML(projectDir string, logger zerolog.Logg
 
 	// Upsun
 	upsunDir := filepath.Join(projectDir, ".upsun")
-	if _, err := os.Stat(upsunDir); err == nil {
-		if files, err := os.ReadDir(upsunDir); err == nil {
-			for _, file := range files {
-				configFile := filepath.Join(".upsun", file.Name())
-				if servicesYAML, err := os.ReadFile(filepath.Join(projectDir, configFile)); err == nil {
-					var config struct {
-						Services serviceConfigs `yaml:"services"`
-					}
-					if err := yaml.Unmarshal(servicesYAML, &config); err == nil {
-						if dbName, dbVersion, err := extractCloudDatabaseType(config.Services); err == nil {
-							logger.Debug().Msgf("DB configured in %s", configFile)
-							return configFile, dbName, dbVersion
-						} else {
-							logger.Debug().Msgf("No DB configured in %s", configFile)
-						}
-					} else {
-						logger.Debug().Msgf("Unable to parse the %s file", configFile)
-					}
-				} else {
-					logger.Debug().Msgf("Unable to read the %s file", configFile)
-				}
-			}
-		} else {
-			logger.Debug().Msg("Unable to list files under the .upsun directory")
-		}
-	} else {
+	if _, err := os.Stat(upsunDir); err != nil {
 		logger.Debug().Msg("No .upsun directory found")
+		return "", "", ""
 	}
+	
+	files, err := os.ReadDir(upsunDir);
+	if err != nil {
+		logger.Debug().Msg("Unable to list files under the .upsun directory")
+		return "", "", ""
+	}
+
+	for _, file := range files {
+		configFile := filepath.Join(".upsun", file.Name())
+		if servicesYAML, err := os.ReadFile(filepath.Join(projectDir, configFile)); err != nil {
+			logger.Debug().Msgf("Unable to read the %s file", configFile)
+			continue
+		}
+
+		var config struct {
+			Services serviceConfigs `yaml:"services"`
+		}
+		if err := yaml.Unmarshal(servicesYAML, &config); err != nil {
+			logger.Debug().Msgf("Unable to parse the %s file", configFile)
+			continue
+		}
+		
+		dbName, dbVersion, err := extractCloudDatabaseType(config.Services);
+		if err != nil {
+			logger.Debug().Msgf("No DB configured in %s", configFile)
+			continue	
+		}
+
+		logger.Debug().Msgf("DB configured in %s", configFile)
+		return configFile, dbName, dbVersion
+	}
+
 	logger.Debug().Msg("No DB configured")
 	return "", "", ""
 }
