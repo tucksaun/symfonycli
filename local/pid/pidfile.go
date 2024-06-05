@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mitchellh/go-homedir"
 	"github.com/pkg/errors"
@@ -35,6 +36,8 @@ import (
 	"github.com/symfony-cli/symfony-cli/local/projects"
 	"github.com/symfony-cli/symfony-cli/util"
 )
+
+const WebServerName = "Web Server"
 
 type PidFile struct {
 	Dir        string   `json:"dir"`
@@ -92,7 +95,7 @@ func (p *PidFile) String() string {
 		return p.CustomName
 	}
 	if p.Args == nil {
-		return "Web Server"
+		return WebServerName
 	}
 	return p.Command()
 }
@@ -102,9 +105,50 @@ func (p *PidFile) ShortName() string {
 		return p.CustomName
 	}
 	if len(p.Args) == 0 {
-		return "Web Server"
+		return WebServerName
 	}
 	return "Worker " + p.Args[0]
+}
+
+func (p *PidFile) WaitForExit() error {
+	if p.Pid == 0 {
+		return nil
+	}
+
+	process, err := os.FindProcess(p.Pid)
+	if err != nil {
+		return err
+	}
+
+	defer p.Remove()
+	ch := make(chan error)
+	go func() {
+		if process.Signal(syscall.Signal(0)) != nil {
+			ch <- nil
+			return
+		}
+
+		_, err := process.Wait()
+		if err == nil {
+			ch <- nil
+			return
+		}
+		if serr, isSysCallError := err.(*os.SyscallError); isSysCallError {
+			if errn, isErrno := serr.Err.(syscall.Errno); isErrno && errn == syscall.ECHILD {
+				ch <- nil
+				return
+			}
+		}
+		ch <- errors.WithMessagef(err, "while waiting for process %v (%s)", p.Pid, p.ShortName())
+		close(ch)
+	}()
+
+	select {
+	case err := <-ch:
+		return err
+	case _ = <-time.After(30 * time.Second):
+		return errors.Errorf("Time out detected during \"%s\" process exit", p.ShortName())
+	}
 }
 
 func (p *PidFile) WaitForPid() <-chan error {
@@ -266,7 +310,21 @@ func (p *PidFile) Stop() error {
 	return kill(p.Pid)
 }
 
-func ToConfiguredProjects() (map[string]*projects.ConfiguredProject, error) {
+// Signal sends a signal to the current process for this PidFile
+func (p *PidFile) Signal(sig os.Signal) error {
+	if p.Pid == 0 {
+		return nil
+	}
+
+	process, err := os.FindProcess(p.Pid)
+	if err != nil {
+		return err
+	}
+
+	return process.Signal(sig)
+}
+
+func ToConfiguredProjects(shortenHomeDir bool) (map[string]*projects.ConfiguredProject, error) {
 	ps := make(map[string]*projects.ConfiguredProject)
 	userHomeDir, err := homedir.Dir()
 	if err != nil {
@@ -278,7 +336,7 @@ func ToConfiguredProjects() (map[string]*projects.ConfiguredProject, error) {
 		}
 		port := pid.Port
 		shortDir := pid.Dir
-		if strings.HasPrefix(shortDir, userHomeDir) {
+		if strings.HasPrefix(shortDir, userHomeDir) && shortenHomeDir {
 			shortDir = "~" + shortDir[len(userHomeDir):]
 		}
 		ps[shortDir] = &projects.ConfiguredProject{

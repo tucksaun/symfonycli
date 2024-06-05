@@ -34,7 +34,7 @@ import (
 var localServerListCmd = &console.Command{
 	Category: "local",
 	Name:     "server:list",
-	Aliases:  []*console.Alias{{Name: "server:list"}},
+	Aliases:  []*console.Alias{{Name: "server:list"}, {Name: "server:ls"}},
 	Usage:    "List all configured local web servers",
 	Action: func(c *console.Context) error {
 		return printConfiguredServers()
@@ -50,7 +50,7 @@ func printConfiguredServers() error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
-	runningProjects, err := pid.ToConfiguredProjects()
+	runningProjects, err := pid.ToConfiguredProjects(true)
 	if err != nil {
 		return errors.WithStack(err)
 	}

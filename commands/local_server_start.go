@@ -29,6 +29,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/pkg/errors"
@@ -79,6 +80,7 @@ var localServerStartCmd = &console.Command{
 			// from the console argument.
 			EnvVars: []string{"SSLKEYLOGFILE"},
 		},
+		&console.BoolFlag{Name: "no-workers", Usage: "Do not start workers"},
 	},
 	Action: func(c *console.Context) error {
 		ui := terminal.SymfonyStyle(terminal.Stdout, terminal.Stdin)
@@ -87,7 +89,7 @@ var localServerStartCmd = &console.Command{
 			return err
 		}
 		pidFile := pid.New(projectDir, nil)
-		pidFile.CustomName = "Web Server"
+		pidFile.CustomName = pid.WebServerName
 		if pidFile.IsRunning() {
 			ui.Warning("The local web server is already running")
 			return errors.WithStack(printWebServerStatus(projectDir))
@@ -97,15 +99,6 @@ var localServerStartCmd = &console.Command{
 		}
 
 		homeDir := util.GetHomeDir()
-
-		shutdownCh := make(chan bool, 1)
-		go func() {
-			sigsCh := make(chan os.Signal, 1)
-			signal.Notify(sigsCh, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
-			<-sigsCh
-			signal.Stop(sigsCh)
-			shutdownCh <- true
-		}()
 
 		if err := reexec.NotifyForeground("boot"); err != nil {
 			terminal.Logger.Error().Msg("Unable to go to the background: %s.\nAborting\n" + err.Error())
@@ -136,6 +129,15 @@ var localServerStartCmd = &console.Command{
 				return nil
 			}
 		}
+
+		shutdownCh := make(chan bool)
+		go func() {
+			sigsCh := make(chan os.Signal, 10)
+			signal.Notify(sigsCh, os.Interrupt, syscall.SIGQUIT, syscall.SIGTERM)
+			<-sigsCh
+			signal.Stop(sigsCh)
+			shutdownCh <- true
+		}()
 
 		reexec.NotifyForeground("proxy")
 		proxyConfig, err := proxy.Load(homeDir)
@@ -307,8 +309,15 @@ var localServerStartCmd = &console.Command{
 			go tailer.Tail(terminal.Stderr)
 		}
 
-		if fileConfig != nil {
+		if fileConfig != nil && !config.NoWorkers {
 			reexec.NotifyForeground("workers")
+
+			_, isDockerComposeWorkerConfigured := fileConfig.Workers[project.DockerComposeWorkerKey]
+			var dockerWg sync.WaitGroup
+			if isDockerComposeWorkerConfigured {
+				dockerWg.Add(1)
+			}
+
 			for name, worker := range fileConfig.Workers {
 				pidFile := pid.New(projectDir, worker.Cmd)
 				if pidFile.IsRunning() {
@@ -316,6 +325,7 @@ var localServerStartCmd = &console.Command{
 					continue
 				}
 				pidFile.Watched = worker.Watch
+				pidFile.CustomName = name
 
 				// we run each worker in its own goroutine for several reasons:
 				// * to get things up and running faster
@@ -335,8 +345,41 @@ var localServerStartCmd = &console.Command{
 
 					runner.BuildCmdHook = func(cmd *exec.Cmd) error {
 						cmd.Env = append(cmd.Env, envs.AsSlice(env)...)
-
 						return nil
+					}
+
+					if name == project.DockerComposeWorkerKey {
+						originalBuildCmdHook := runner.BuildCmdHook
+
+						runner.BuildCmdHook = func(cmd *exec.Cmd) error {
+							cmd.Args = append(cmd.Args, "--wait")
+
+							return originalBuildCmdHook(cmd)
+						}
+
+						runner.SuccessHook = func(runner *local.Runner, cmd *exec.Cmd) {
+							terminal.Eprintln("<info>INFO</> Docker Compose is now up, switching to non detached mode")
+
+							// set up the worker for an immediate restart so
+							// that it starts monitoring the containers as soon
+							// as possible after the initial startup
+							runner.AlwaysRestartOnExit = true
+							// but next time this process is successful we don't
+							// have to do anything specific
+							runner.SuccessHook = nil
+							// and we move back AlwaysRestartOnExit to false
+
+							runner.BuildCmdHook = func(cmd *exec.Cmd) error {
+								runner.AlwaysRestartOnExit = false
+
+								return originalBuildCmdHook(cmd)
+							}
+
+							dockerWg.Done()
+						}
+					} else if isDockerComposeWorkerConfigured {
+						terminal.Eprintfln("<info>INFO</> Worker \"%s\" waiting for Docker Compose to be up", name)
+						dockerWg.Wait()
 					}
 
 					ui.Success(fmt.Sprintf("Started worker \"%s\"", name))
@@ -357,8 +400,8 @@ var localServerStartCmd = &console.Command{
 			return err
 		case <-shutdownCh:
 			terminal.Eprintln("")
-			terminal.Eprintln("Shutting down!")
-			if err := cleanupWebServerFiles(projectDir, pidFile); err != nil {
+			terminal.Eprintln("Shutting down! Waiting for all workers to be done.")
+			if err := waitForWorkers(projectDir, pidFile); err != nil {
 				return err
 			}
 			terminal.Eprintln("")
@@ -375,6 +418,25 @@ func cleanupWebServerFiles(projectDir string, pidFile *pid.PidFile) error {
 		if p.IsRunning() {
 			g.Go(p.Stop)
 		}
+	}
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	if err := pidFile.Remove(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func waitForWorkers(projectDir string, pidFile *pid.PidFile) error {
+	pids := pid.AllWorkers(projectDir)
+	if len(pids) < 1 {
+		return nil
+	}
+
+	var g errgroup.Group
+	for _, p := range pids {
+		g.Go(p.WaitForExit)
 	}
 	if err := g.Wait(); err != nil {
 		return err

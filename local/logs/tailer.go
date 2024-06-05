@@ -28,14 +28,14 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hpcloud/tail"
+	"github.com/nxadm/tail"
 	"github.com/pkg/errors"
+	realinotify "github.com/rjeczalik/notify"
 	"github.com/stoicperlman/fls"
 	"github.com/symfony-cli/symfony-cli/humanlog"
 	"github.com/symfony-cli/symfony-cli/inotify"
 	"github.com/symfony-cli/symfony-cli/local/pid"
 	"github.com/symfony-cli/terminal"
-	realinotify "github.com/syncthing/notify"
 )
 
 type namedLine struct {
@@ -253,7 +253,7 @@ func tailFile(filename string, follow bool, nblines int64) (*tail.Tail, error) {
 	return tail.TailFile(filename, tail.Config{
 		Location: &tail.SeekInfo{
 			Offset: pos,
-			Whence: os.SEEK_SET,
+			Whence: io.SeekStart,
 		},
 		ReOpen: follow,
 		Follow: follow,

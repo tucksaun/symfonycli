@@ -24,9 +24,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/symfony-cli/symfony-cli/local/platformsh"
 	"github.com/symfony-cli/symfony-cli/util"
 )
 
@@ -122,9 +124,6 @@ func extractRelationshipsEnvs(env Environment) Envs {
 			prefix = strings.Replace(prefix, "-", "_", -1)
 
 			if scheme == "pgsql" || scheme == "mysql" {
-				if !isMaster(endpoint) {
-					continue
-				}
 				if scheme == "pgsql" {
 					// works for both Doctrine and Go
 					endpoint["scheme"] = "postgres"
@@ -148,7 +147,8 @@ func extractRelationshipsEnvs(env Environment) Envs {
 				}
 				url += fmt.Sprintf("%s:%s/%s?sslmode=disable", endpoint["host"].(string), formatInt(endpoint["port"]), path)
 				values[fmt.Sprintf("%sURL", prefix)] = url
-				if env.Language() != "golang" {
+				detectedLanguage := env.Language()
+				if detectedLanguage != "golang" {
 					charset := "utf8"
 					if envCharset := os.Getenv(fmt.Sprintf("%sCHARSET", prefix)); envCharset != "" {
 						charset = envCharset
@@ -157,27 +157,44 @@ func extractRelationshipsEnvs(env Environment) Envs {
 					}
 					values[fmt.Sprintf("%sURL", prefix)] = values[fmt.Sprintf("%sURL", prefix)] + "&charset=" + charset
 				}
-				if env.Language() == "php" {
+				if detectedLanguage == "php" {
+					versionKey := fmt.Sprintf("%sVERSION", prefix)
 					if v, ok := endpoint["type"]; ok {
-						versionKey := fmt.Sprintf("%sVERSION", prefix)
-						if version, hasVersionInEnv := os.LookupEnv(versionKey); hasVersionInEnv {
-							values[versionKey] = version
-							values[fmt.Sprintf("%sURL", prefix)] = values[fmt.Sprintf("%sURL", prefix)] + "&serverVersion=" + values[versionKey]
-						} else if strings.Contains(v.(string), ":") {
-							version := strings.SplitN(v.(string), ":", 2)[1]
+						// configuration from doctrine.yaml takes precedence over psh config
+						if doctrineConfigVersion, err := platformsh.ReadDBVersionFromDoctrineConfigYAML(env.Path()); err == nil && doctrineConfigVersion != "" {
+							// configuration from doctrine.yaml
+							values[versionKey] = doctrineConfigVersion
+						} else {
+							// type is available when in the cloud or locally via a tunnel
+							if version, hasVersionInEnv := os.LookupEnv(versionKey); hasVersionInEnv {
+								values[versionKey] = version
+							} else if strings.Contains(v.(string), ":") {
+								version := strings.SplitN(v.(string), ":", 2)[1]
 
-							// we actually provide mariadb not mysql
-							if endpoint["scheme"].(string) == "mysql" {
-								minor := 0
-								if version == "10.2" {
-									minor = 7
+								// we actually provide mariadb not mysql
+								if endpoint["scheme"].(string) == "mysql" {
+									minor := 0
+									if version == "10.2" {
+										minor = 7
+									}
+									version = fmt.Sprintf("%s.%d-MariaDB", version, minor)
 								}
-								version = fmt.Sprintf("%s.%d-MariaDB", version, minor)
-							}
 
-							values[versionKey] = version
-							values[fmt.Sprintf("%sURL", prefix)] = values[fmt.Sprintf("%sURL", prefix)] + "&serverVersion=" + values[versionKey]
+								values[versionKey] = version
+							}
 						}
+					} else if env.Local() {
+						// Docker support
+						if v, ok := endpoint["version"]; ok {
+							values[versionKey] = v.(string)
+
+							if matches := regexp.MustCompile(`^\d:(\d+\.\d+\.\d+).maria`).FindStringSubmatch(values[versionKey]); matches != nil {
+								values[versionKey] = fmt.Sprintf("%s-MariaDB", matches[1])
+							}
+						}
+					}
+					if v, ok := values[versionKey]; ok && v != "" {
+						values[fmt.Sprintf("%sURL", prefix)] += "&serverVersion=" + v
 					}
 				}
 				values[fmt.Sprintf("%sSERVER", prefix)] = formatServer(endpoint)
@@ -234,8 +251,13 @@ func extractRelationshipsEnvs(env Environment) Envs {
 				values[fmt.Sprintf("%sUSERNAME", prefix)] = endpoint["username"].(string)
 				values[fmt.Sprintf("%sPASSWORD", prefix)] = endpoint["password"].(string)
 			} else if scheme == "amqp" {
-				values[fmt.Sprintf("%sURL", prefix)] = fmt.Sprintf("%s://%s:%s@%s:%s", endpoint["scheme"].(string), endpoint["username"].(string), endpoint["password"].(string), endpoint["host"].(string), formatInt(endpoint["port"]))
-				values[fmt.Sprintf("%sDSN", prefix)] = fmt.Sprintf("%s://%s:%s@%s:%s", endpoint["scheme"].(string), endpoint["username"].(string), endpoint["password"].(string), endpoint["host"].(string), formatInt(endpoint["port"]))
+				vhost := ""
+				if v, ok := endpoint["vhost"]; ok && v != nil {
+					values[fmt.Sprintf("%sVHOST", prefix)] = endpoint["vhost"].(string)
+					vhost = "/" + endpoint["vhost"].(string)
+				}
+				values[fmt.Sprintf("%sURL", prefix)] = fmt.Sprintf("%s://%s:%s@%s:%s%s", endpoint["scheme"].(string), endpoint["username"].(string), endpoint["password"].(string), endpoint["host"].(string), formatInt(endpoint["port"]), vhost)
+				values[fmt.Sprintf("%sDSN", prefix)] = fmt.Sprintf("%s://%s:%s@%s:%s%s", endpoint["scheme"].(string), endpoint["username"].(string), endpoint["password"].(string), endpoint["host"].(string), formatInt(endpoint["port"]), vhost)
 				values[fmt.Sprintf("%sSERVER", prefix)] = formatServer(endpoint)
 				values[fmt.Sprintf("%sHOST", prefix)] = endpoint["host"].(string)
 				values[fmt.Sprintf("%sPORT", prefix)] = formatInt(endpoint["port"])
@@ -246,21 +268,29 @@ func extractRelationshipsEnvs(env Environment) Envs {
 			} else if scheme == "memcached" {
 				values[fmt.Sprintf("%sHOST", prefix)] = endpoint["host"].(string)
 				values[fmt.Sprintf("%sPORT", prefix)] = formatInt(endpoint["port"])
-				values[fmt.Sprintf("%sIP", prefix)] = endpoint["ip"].(string)
+				if v, ok := endpoint["ip"]; ok && v != nil {
+					values[fmt.Sprintf("%sIP", prefix)] = v.(string)
+				}
 			} else if rel == "influxdb" {
 				values[fmt.Sprintf("%sSCHEME", prefix)] = endpoint["scheme"].(string)
 				values[fmt.Sprintf("%sHOST", prefix)] = endpoint["host"].(string)
 				values[fmt.Sprintf("%sPORT", prefix)] = formatInt(endpoint["port"])
-				values[fmt.Sprintf("%sIP", prefix)] = endpoint["ip"].(string)
+				if v, ok := endpoint["ip"]; ok && v != nil {
+					values[fmt.Sprintf("%sIP", prefix)] = v.(string)
+				}
 			} else if scheme == "kafka" {
 				values[fmt.Sprintf("%sURL", prefix)] = fmt.Sprintf("%s://%s:%s", endpoint["scheme"].(string), endpoint["host"].(string), formatInt(endpoint["port"]))
 				values[fmt.Sprintf("%sSCHEME", prefix)] = endpoint["scheme"].(string)
 				values[fmt.Sprintf("%sHOST", prefix)] = endpoint["host"].(string)
 				values[fmt.Sprintf("%sPORT", prefix)] = formatInt(endpoint["port"])
-				values[fmt.Sprintf("%sIP", prefix)] = endpoint["ip"].(string)
+				if v, ok := endpoint["ip"]; ok && v != nil {
+					values[fmt.Sprintf("%sIP", prefix)] = v.(string)
+				}
 			} else if scheme == "tcp" {
 				values[fmt.Sprintf("%sURL", prefix)] = formatServer(endpoint)
-				values[fmt.Sprintf("%sIP", prefix)] = endpoint["ip"].(string)
+				if v, ok := endpoint["ip"]; ok && v != nil {
+					values[fmt.Sprintf("%sIP", prefix)] = v.(string)
+				}
 				values[fmt.Sprintf("%sPORT", prefix)] = formatInt(endpoint["port"])
 				values[fmt.Sprintf("%sSCHEME", prefix)] = endpoint["scheme"].(string)
 				values[fmt.Sprintf("%sHOST", prefix)] = endpoint["host"].(string)
@@ -279,7 +309,9 @@ func extractRelationshipsEnvs(env Environment) Envs {
 					values[fmt.Sprintf("%sURL", prefix)] = fmt.Sprintf("%s://%s:%s", endpoint["scheme"].(string), endpoint["host"].(string), formatInt(endpoint["port"]))
 				}
 				values[fmt.Sprintf("%sSERVER", prefix)] = formatServer(endpoint)
-				values[fmt.Sprintf("%sIP", prefix)] = endpoint["ip"].(string)
+				if v, ok := endpoint["ip"]; ok && v != nil {
+					values[fmt.Sprintf("%sIP", prefix)] = v.(string)
+				}
 				values[fmt.Sprintf("%sPORT", prefix)] = formatInt(endpoint["port"])
 				values[fmt.Sprintf("%sSCHEME", prefix)] = endpoint["scheme"].(string)
 				values[fmt.Sprintf("%sHOST", prefix)] = endpoint["host"].(string)
@@ -306,7 +338,9 @@ func extractRelationshipsEnvs(env Environment) Envs {
 				// for Symfony Mailer, use a MAILER prefix
 				values[fmt.Sprintf("%sDSN", prefix)] = fmt.Sprintf("%s://%s:%s", endpoint["scheme"].(string), endpoint["host"].(string), formatInt(endpoint["port"]))
 			} else if rel == "simple" {
-				values[fmt.Sprintf("%sIP", prefix)] = endpoint["ip"].(string)
+				if v, ok := endpoint["ip"]; ok && v != nil {
+					values[fmt.Sprintf("%sIP", prefix)] = v.(string)
+				}
 				values[fmt.Sprintf("%sPORT", prefix)] = formatInt(endpoint["port"])
 				values[fmt.Sprintf("%sHOST", prefix)] = endpoint["host"].(string)
 			}

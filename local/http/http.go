@@ -135,7 +135,7 @@ func (s *Server) Start(errChan chan error) (int, error) {
 	}
 
 	m := cmux.New(ln)
-	httpl := m.Match(cmux.HTTP1Fast())
+	httpl := m.Match(cmux.HTTP1Fast(http.MethodPatch))
 	tlsl := m.Match(cmux.Any())
 
 	if !s.AllowHTTP {
@@ -203,7 +203,7 @@ func (s *Server) ProxyHandler(w http.ResponseWriter, r *http.Request) {
 	} else if status >= 400 {
 		l = s.Logger.Warn()
 	}
-	l = l.Str("ip", ip).Int("status", status).Str("method", r.Method).Str("scheme", "https").Str("host", "127.0.0.1:8004")
+	l = l.Str("ip", ip).Int("status", status).Str("method", r.Method).Str("scheme", "https").Str("host", r.Host)
 	if len(resources) > 0 {
 		l.Strs("preloaded_resources", resources)
 	}
@@ -232,7 +232,7 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	env := map[string]string{
 		"SERVER_PORT":     s.serverPort,
-		"SERVER_NAME":     r.Host,
+		"SERVER_NAME":     strings.Split(r.Host, ":")[0],
 		"SERVER_PROTOCOL": r.Proto,
 		"SERVER_SOFTWARE": fmt.Sprintf("symfony-cli/%s", s.Appversion),
 	}

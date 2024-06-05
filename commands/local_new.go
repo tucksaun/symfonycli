@@ -64,6 +64,7 @@ var localNewCmd = &console.Command{
 		&console.BoolFlag{Name: "full", Usage: "Use github.com/symfony/website-skeleton (deprecated, use --webapp instead)"},
 		&console.BoolFlag{Name: "demo", Usage: "Use github.com/symfony/demo"},
 		&console.BoolFlag{Name: "webapp", Usage: "Add the webapp pack to get a fully configured web project"},
+		&console.BoolFlag{Name: "api", Usage: "Add the api pack to get a fully configured api project"},
 		&console.BoolFlag{Name: "book", Usage: "Clone the Symfony: The Fast Track book project"},
 		&console.BoolFlag{Name: "docker", Usage: "Enable Docker support"},
 		&console.BoolFlag{Name: "no-git", Usage: "Do not initialize Git"},
@@ -112,7 +113,15 @@ var localNewCmd = &console.Command{
 
 		if c.Bool("book") {
 			if symfonyVersion == "" {
-				return console.Exit("The --version flag is required for the Symfony book", 1)
+				versions, err := book.Versions()
+				if err != nil {
+					return errors.Wrap(err, "unable to get book versions")
+				}
+				terminal.Println("The --version flag is required for the Symfony book; available versions:")
+				for _, v := range versions {
+					terminal.Println(fmt.Sprintf(" - %s", v))
+				}
+				return console.Exit("", 1)
 			}
 
 			book := &book.Book{
@@ -130,6 +139,9 @@ var localNewCmd = &console.Command{
 		}
 		if c.Bool("webapp") && c.Bool("no-git") {
 			return console.Exit("The --webapp flag cannot be used with --no-git", 1)
+		}
+		if c.Bool("webapp") && c.Bool("api") {
+			return console.Exit("The --api flag cannot be used with --webapp", 1)
 		}
 		withCloud := c.Bool("cloud") || c.Bool("upsun")
 		if len(c.StringSlice("service")) > 0 && !withCloud {
@@ -149,7 +161,7 @@ var localNewCmd = &console.Command{
 			return err
 		}
 
-		if "" != c.String("php") && !withCloud {
+		if c.String("php") != "" && !withCloud {
 			if err := createPhpVersionFile(c.String("php"), dir); err != nil {
 				return err
 			}
@@ -157,7 +169,7 @@ var localNewCmd = &console.Command{
 
 		if !c.Bool("no-git") {
 			if _, err := exec.LookPath("git"); err == nil {
-				if err := initProjectGit(c, s, dir); err != nil {
+				if err := initProjectGit(c, dir); err != nil {
 					return err
 				}
 			}
@@ -170,6 +182,12 @@ var localNewCmd = &console.Command{
 			buf, err := git.AddAndCommit(dir, []string{"."}, "Add webapp packages", c.Bool("debug"))
 			if err != nil {
 				fmt.Print(buf.String())
+				return err
+			}
+		}
+
+		if c.Bool("api") {
+			if err := runComposer(c, dir, []string{"require", "api"}, c.Bool("debug")); err != nil {
 				return err
 			}
 		}
@@ -187,7 +205,7 @@ var localNewCmd = &console.Command{
 			if c.Bool("upsun") {
 				brand = platformsh.UpsunBrand
 			}
-			if err := initCloud(c, brand, s, minorPHPVersion, dir); err != nil {
+			if err := initCloud(c, brand, minorPHPVersion, dir); err != nil {
 				return err
 			}
 		}
@@ -216,7 +234,7 @@ func isEmpty(dir string) (bool, error) {
 	return false, err
 }
 
-func initCloud(c *console.Context, brand platformsh.CloudBrand, s *terminal.Spinner, minorPHPVersion, dir string) error {
+func initCloud(c *console.Context, brand platformsh.CloudBrand, minorPHPVersion, dir string) error {
 	terminal.Printfln("* Adding %s configuration", brand)
 
 	cloudServices, err := parseCloudServices(dir, c.StringSlice("service"))
@@ -283,6 +301,8 @@ func parseDockerComposeServices(dir string) []*CloudService {
 	if err != nil {
 		return nil
 	}
+
+	seen := map[string]bool{}
 	for _, service := range project.Services {
 		for _, port := range service.Ports {
 			var s *CloudService
@@ -303,7 +323,9 @@ func parseDockerComposeServices(dir string) []*CloudService {
 			} else if port.Target == 9092 {
 				s = &CloudService{Type: "kafka"}
 			}
-			if s != nil {
+			_, done := seen[service.Name]
+			if s != nil && !done {
+				seen[service.Name] = true
 				s.Name = service.Name
 				parts := strings.Split(service.Image, ":")
 				s.Version = regexp.MustCompile(`\d+(\.\d+)?`).FindString(parts[len(parts)-1])
@@ -321,7 +343,7 @@ func parseDockerComposeServices(dir string) []*CloudService {
 	return cloudServices
 }
 
-func initProjectGit(c *console.Context, s *terminal.Spinner, dir string) error {
+func initProjectGit(c *console.Context, dir string) error {
 	terminal.Println("* Setting up the project under Git version control")
 	terminal.Printfln("  (running git init %s)\n", dir)
 	// Only force the branch to be "main" when running a Cloud context to make

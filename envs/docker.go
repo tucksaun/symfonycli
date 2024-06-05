@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	docker "github.com/docker/docker/client"
 	"github.com/symfony-cli/terminal"
 )
@@ -69,7 +70,7 @@ func (l *Local) RelationshipsFromDocker() Relationships {
 	}
 
 	opts := [](docker.Opt){docker.FromEnv}
-	if host := os.Getenv("DOCKER_HOST"); host != "" && !strings.HasPrefix(host, "unix://") {
+	if host := os.Getenv(docker.EnvOverrideHost); host != "" && !strings.HasPrefix(host, "unix://") {
 		// Setting a dialer on top of a unix socket breaks the connection
 		// as the client then tries to connect to http:///path/to/socket and
 		// thus tries to resolve the /path/to/socket host
@@ -89,7 +90,7 @@ func (l *Local) RelationshipsFromDocker() Relationships {
 
 	client.NegotiateAPIVersion(context.Background())
 
-	containers, err := client.ContainerList(context.Background(), types.ContainerListOptions{})
+	containers, err := client.ContainerList(context.Background(), container.ListOptions{})
 	if err != nil {
 		if docker.IsErrConnectionFailed(err) {
 			terminal.Logger.Warn().Msg(err.Error())
@@ -182,13 +183,13 @@ func (l *Local) dockerServiceToRelationship(client *docker.Client, container typ
 		}
 	}
 
-	host := os.Getenv("DOCKER_HOST")
+	host := os.Getenv(docker.EnvOverrideHost)
 	if host == "" || strings.HasPrefix(host, "unix://") {
 		host = "127.0.0.1"
 	} else {
 		u, err := url.Parse(host)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  ERROR: unable to parse DOCKER_HOST \"%s\", falling back to 127.0.0.1: %s\n", host, err)
+			fmt.Fprintf(os.Stderr, "  ERROR: unable to parse %s \"%s\", falling back to 127.0.0.1: %s\n", docker.EnvOverrideHost, host, err)
 			host = "127.0.0.1"
 		} else {
 			host = u.Hostname()
@@ -199,7 +200,7 @@ func (l *Local) dockerServiceToRelationship(client *docker.Client, container typ
 	for _, p := range exposedPorts {
 		rels := make(map[string]map[string]interface{})
 		if p.PrivatePort == 1025 {
-			// recommended image: schickling/mailcatcher
+			// recommended image: sj26/mailcatcher or axllent/mailpit (default now)
 			for _, pw := range exposedPorts {
 				if pw.PrivatePort == 1080 || pw.PrivatePort == 8025 {
 					rels["-web"] = map[string]interface{}{
@@ -397,7 +398,7 @@ func (l *Local) dockerServiceToRelationship(client *docker.Client, container typ
 				"scheme": "http",
 			}
 			return rels
-		} else if p.PrivatePort == 27017 {
+		} else if p.PrivatePort == 27017 || p.PrivatePort == 27018 || p.PrivatePort == 27019 {
 			username := ""
 			password := ""
 			path := ""
