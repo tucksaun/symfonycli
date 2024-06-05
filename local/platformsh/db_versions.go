@@ -50,7 +50,8 @@ func ReadDBVersionFromPlatformServiceYAML(projectDir string, logger zerolog.Logg
 
 	for _, file := range files {
 		configFile := filepath.Join(".upsun", file.Name())
-		if servicesYAML, err := os.ReadFile(filepath.Join(projectDir, configFile)); err != nil {
+		servicesYAML, err := os.ReadFile(filepath.Join(projectDir, configFile));
+		if err != nil {
 			logger.Debug().Msgf("Unable to read the %s file", configFile)
 			continue
 		}
