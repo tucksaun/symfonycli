@@ -21,6 +21,8 @@ package process
 
 import (
 	"net"
+	"os"
+	"syscall"
 )
 
 // FindAvailablePort finds an available port
@@ -30,9 +32,23 @@ func FindAvailablePort() (int, error) {
 		return 0, err
 	}
 	l, err := net.ListenTCP("tcp", addr)
+	// in case of ENOTAVAIL, fallback to try to bind on 127.0.0.1 only
+	if err != nil && ErrIsENOTAVAIL(err) {
+		l, err = net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(0)})
+	}
 	if err != nil {
 		return 0, err
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+func ErrIsENOTAVAIL(err error) bool {
+	if op, ok := err.(*net.OpError); ok {
+		err = op.Err
+	}
+	if sys, ok := err.(*os.SyscallError); ok {
+		err = sys.Err
+	}
+	return err == syscall.EADDRNOTAVAIL
 }
