@@ -42,7 +42,7 @@ var (
 		Hidden: console.Hide,
 		// we use an alias to avoid the command being shown in the help but
 		// still be available for completion
-		Aliases: []*console.Alias{{Name: "pie"}},
+		Aliases:       []*console.Alias{{Name: "pie"}},
 		ShellComplete: autocompletePieWrapper,
 		Action: func(c *console.Context) error {
 			return console.IncorrectUsageError{ParentError: errors.New(`This command can only be run as "symfony pie"`)}
