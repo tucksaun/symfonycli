@@ -52,9 +52,14 @@ func autocompleteApplicationConsoleWrapper(context *console.Context, words compl
 }
 
 func autocompletePieWrapper(context *console.Context, words complete.Args) []string {
-	return autocompleteSymfonyConsoleWrapper(words, "pie", func(args []string) (*php.Executor, error) {
-		return php.PieExecutor("", args, []string{}, context.App.Writer, context.App.ErrWriter, io.Discard, terminal.Logger)
-	})
+	args := buildSymfonyAutocompleteArgs("pie", words)
+	args = append(args, "-sbash")
+
+	res := php.Pie("", args, []string{}, context.App.Writer, context.App.ErrWriter, io.Discard, terminal.Logger)
+	os.Exit(res.ExitCode())
+
+	// unreachable
+	return []string{}
 }
 
 // autocompleteSymfonyConsoleWrapper bridges the symfony-cli/console (Go)
