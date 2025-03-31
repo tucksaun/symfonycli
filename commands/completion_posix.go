@@ -45,21 +45,37 @@ func init() {
 	console.CompletionTemplates = completionTemplates
 }
 
-func autocompleteSymfonyConsoleWrapper(context *console.Context, words complete.Args) []string {
-	args := buildSymfonyAutocompleteArgs("console", words)
+func autocompleteApplicationConsoleWrapper(context *console.Context, words complete.Args) []string {
+	return autocompleteSymfonyConsoleWrapper(words, "console", func(args []string) (*Executor, error) {
+		return php.SymfonyConsoleExecutor(terminal.Logger, args)
+	})
+}
+
+func autocompletePieWrapper(context *console.Context, words complete.Args) []string {
+	return autocompleteSymfonyConsoleWrapper(words, "console", func(args []string) (*Executor, error) {
+		return php.Pie("", args, []string{}, context.App.Writer, context.App.ErrWriter, io.Discard, terminal.Logger)
+	})
+}
+
+// autocompleteSymfonyConsoleWrapper bridges the symfony-cli/console (Go)
+// autocompletion with a symfony/console (PHP) one.
+func autocompleteSymfonyConsoleWrapper(words complete.Args, commandName string, executor func(args []string) (*Executor, error)) []string {
+	args := buildSymfonyAutocompleteArgs(commandName, words)
 	// Composer does not support those options yet, so we only use them for Symfony Console
 	args = append(args, "-a1", fmt.Sprintf("-s%s", console.GuessShell()))
 
-	if executor, err := php.SymfonyConsoleExecutor(terminal.Logger, args); err == nil {
+	if executor, err := executor(args); err == nil {
 		os.Exit(executor.Execute(false))
 	}
 
 	return []string{}
 }
 
+// autocompleteComposerWrapper is a bridget between Go autocompletion and
+// Composer one. It does does use the generic one because Composer does not
+// support multiple shell yet.
 func autocompleteComposerWrapper(context *console.Context, words complete.Args) []string {
 	args := buildSymfonyAutocompleteArgs("composer", words)
-	// Composer does not support multiple shell yet, so we only use the default one
 	args = append(args, "-sbash")
 
 	res := php.Composer("", args, []string{}, context.App.Writer, context.App.ErrWriter, io.Discard, terminal.Logger)
